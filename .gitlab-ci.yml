@@ -1,0 +1,102 @@
+stages:
+  - ver_checkout
+  - lint
+  - test
+  - docker_cleanup
+
+variables:
+  VERSION: 0.0.1
+  CONFIG_FILE: .env.ini
+  ENV_FILE: .env
+  FF_ENABLE_BASH_EXIT_CODE_CHECK: "true" # gitlab feature flag to break CI job when bash command fails. See gitlab docs
+
+.attach_python: &attach_python
+  - bash --login
+  - pyenv local 3.8.5
+  - pip install pipenv==2022.1.8
+
+.configs_prepare: &prepare_env_files
+  - cp "$CONFIG_INI" $CONFIG_FILE
+
+.docker_clean: &docker_clean
+  - docker-compose down --remove-orphans > /dev/null 2>&1 || true
+  - yes | docker volume prune > /dev/null 2>&1 || true
+
+.docker_cleanup_cache: &docker_cleanup_cache
+  - docker system prune -f --volumes && docker system prune -f -a> /dev/null 2>&1 || true
+
+.base_lint:
+  stage: lint
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  tags: [ some-tag ]
+
+
+#--------------------------------------------merge-request----------------------------------
+flake8:
+  extends: .base_lint
+  before_script:
+    - *attach_python
+    - pushd ./app/ && pipenv sync --system --dev && popd
+  script:
+    - python -m flake8
+
+eslint:
+  extends: .base_lint
+  before_script:
+    - cd frontend/
+    - npm ci
+  script:
+    - npm run eslint
+
+
+#---------------------------------------------merge-test--------------------------------
+test-migrations:
+  stage: test
+  variables:
+    TESTING_DB_NAME: 'test_migrations_database'
+  rules:
+    - if: '$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /AUTO_MR.+/'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - *prepare_env_files
+    - *docker_clean
+  script:
+    - docker-compose run --rm --entrypoint "bash -c
+      'python3 manage.py makemigrations --dry-run --check || { echo \"look for error above, maybe you have not save migrations \"; exit 1; }'"
+      service-name
+    - docker-compose run --rm --entrypoint "bash -c
+      'pytest tests/migrations -s -m \"migration_test\" || { echo \"look for error above, maybe your migrations are broken\"; exit 1; }'"
+      service-name
+  tags: [ some-tag-single-job ]
+
+
+#---------------------------------------------merge-result--------------------------------
+version_checkout:
+  stage: ver_checkout
+  rules:
+    - if: '$CI_COMMIT_MESSAGE =~ /Bump version: \d+\.\d+\.\d+ → \d+\.\d+\.\d+/'
+      when: never
+    - if: '$CI_COMMIT_REF_NAME == "master" && $CI_PIPELINE_SOURCE == "push"'
+  before_script:
+    - *attach_python
+    - pushd ./app/ && pipenv sync --system --dev && popd
+    - export SSH_ORIGIN=$(echo "${CI_REPOSITORY_URL}")
+    - git remote set-url origin "$SSH_ORIGIN"
+    - git checkout ${CI_COMMIT_BRANCH}
+  script:
+    - bumpversion patch
+    - git push --tags --set-upstream origin ${CI_COMMIT_BRANCH}
+  tags: [ some-tag ]
+
+
+#---------------------------------------------schedule--------------------------------------
+month_docker_cleanup:
+  stage: docker_cleanup
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $DOCKER_CLEANUP == "True"'
+  script:
+    - *docker_clean
+    - *docker_cleanup_cache
+  tags: [ some-tag ]
