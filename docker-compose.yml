@@ -18,7 +18,15 @@ services:
       - "8000:80"
     environment:
       - SOME_VARIABLE=20
-    entrypoint: bash -c "make some_make_command"
+    entrypoint: bash -c "just some_make_command"
+
+  backend-2:
+    <<: *backend
+    ports:
+      - "8001:81"
+    environment:
+      - SOME_VARIABLE_2=20
+    entrypoint: bash -c "just some_make_command_2"
 
   postgres:
     image: postgres:15.1
