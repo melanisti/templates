@@ -5,7 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: ./Dockerfile.dev
-    image: backend
+    image: python39-jdk-11-dev
     restart: always
     env_file:
       - .env.ini.backend
@@ -15,10 +15,14 @@ services:
       - local_data_backups:/backups
       - ./backend:/app
     ports:
-      - "8000:80"
+      - "${BACKEND_PORT:-8080}:${BACKEND_PORT:-8080}"
     environment:
-      - SOME_VARIABLE=20
-    entrypoint: bash -c "just some_make_command"
+      - PYTHONDONTWRITEBYTECODE=1 # Keeps Python from generating .pyc files in the container
+      - PYTHONUNBUFFERED=1 # Turns off buffering for easier container logging
+    entrypoint: >
+      /bin/bash -c "watchmedo auto-restart --recursive --directory="./app" --pattern="*.py" -- \
+      gunicorn -w ${WORKERS_COUNT:-2} -b :${BACKEND_PORT:-8080} -t ${TIMEOUT:-300} -k uvicorn.workers.UvicornWorker --chdir ./app main:app"
+
 
   backend-2:
     <<: *backend
@@ -29,12 +33,13 @@ services:
     entrypoint: bash -c "just some_make_command_2"
 
   postgres:
-    image: postgres:15.1
+    image: postgres:15.2-alpine
     restart: always
     env_file:
       - .env.ini.backend
     volumes:
-      - local_postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_PATH:-/var/lib/postgresql/data}:/var/lib/postgresql/data
+      - ${POSTGRES_LOGS_PATH:-/var/lib/postgresql/logs}:/var/lib/postgresql/logs
       - local_data_backups:/backups
     expose:
       - 5432
