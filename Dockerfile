@@ -1,24 +1,26 @@
-FROM python:3.10
+FROM python:3.10 AS python39-jdk-11
 
-ENV PYTHONUNBUFFERED 1
-ENV PYTHONDONTWRITEBYTECODE 1
+# Installing openjdk
+RUN apt-get update && apt-get install -y openjdk-11-jdk && rm -rf /var/lib/apt/lists/*
+
+# Installing python dependencies
+RUN python3 -m pip --no-cache-dir install --upgrade pip && \
+    python3 --version && \
+    pip3 --version
 
 COPY . /app
 WORKDIR /app
 
-RUN apt-get update \
- # dependencies for building Python packages
- && apt-get install -y build-essential \
- # psycopg2 dependencies
- && apt-get install -y libpq-dev \
- # psql client
- && apt-get install -y postgresql-client  \
- # Translations dependencies
- && apt-get install -y gettext \
- # For sudo command available
- && apt-get install -y sudo \
- # Pipenv
- && pip install --upgrade pip \
- && pip install pipenv==2022.1.8 \
- && pipenv sync --system \
- && rm -rf Pipfile.lock Pipfile
+FROM python39-jdk-11 AS python39-jdk-11-dev
+COPY ./Pipfile ./Pipfile.lock ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir pipenv==2023.2.18 \
+    && pipenv sync --dev --system \
+    && rm -rf Pipfile.lock Pipfile
+
+FROM python39-jdk-11 AS python39-jdk-11-prod
+COPY ./Pipfile ./Pipfile.lock ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir pipenv==2023.2.18 \
+    && pipenv sync --system \
+    && rm -rf Pipfile.lock Pipfile
